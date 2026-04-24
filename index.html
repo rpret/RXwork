@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rx Scheduler — Pharmacy Schedule Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <header class="hdr">
+    <div class="brand">
+      <div class="brand-ico">&#128138;</div>
+      <div>
+        <div class="brand-name">Rx Scheduler</div>
+        <div class="brand-sub">Pharmacy Schedule Builder</div>
+      </div>
+    </div>
+    <div class="week-nav">
+      <button class="wnav-btn" onclick="changeWeek(-1)">&#8249;</button>
+      <span class="week-lbl" id="weekLbl">Loading&hellip;</span>
+      <button class="wnav-btn" onclick="changeWeek(1)">&#8250;</button>
+    </div>
+    <div class="hdr-acts">
+      <button class="btn btn-ghost btn-sm" onclick="clearWeek()">&#128465; Clear</button>
+      <button class="btn btn-ghost btn-sm" onclick="window.print()">&#128424; Print</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportCSV()">&#11015; CSV</button>
+      <button class="btn btn-success btn-sm" onclick="openBuildWizard()">&#9889; Auto-Build</button>
+      <button class="btn btn-primary btn-sm" onclick="openEmpModal()">+ Employee</button>
+    </div>
+  </header>
+
+  <!-- SIDEBAR -->
+  <aside class="sb">
+    <div class="sb-sec">
+      <div class="sb-title">Budget Tracker</div>
+      <div class="bgt">
+        <div class="bgt-pct ok" id="bPct">0%</div>
+        <div class="bgt-bar-wrap"><div class="bgt-bar" id="bBar" style="width:0%"></div></div>
+        <div class="bgt-row"><span class="bgt-lbl">Scheduled</span><span class="bgt-val" id="bSched">0.0 h</span></div>
+        <div class="bgt-row"><span class="bgt-lbl">Base budget</span><span class="bgt-val" id="bBase">194.0 h</span></div>
+        <div class="bgt-row"><span class="bgt-lbl">Max allowed</span><span class="bgt-val" id="bMax">225.0 h</span></div>
+      </div>
+    </div>
+    <div class="sb-sec">
+      <div class="sb-title">Budget Settings</div>
+      <div class="cfg-row"><span class="cfg-lbl">Base budget (h)</span><input class="cfg-inp" id="cfgBase" type="number" min="1" oninput="syncConfig()"></div>
+      <div class="cfg-row"><span class="cfg-lbl">Max budget (h)</span><input class="cfg-inp" id="cfgMax" type="number" min="1" oninput="syncConfig()"></div>
+      <div class="cfg-row"><span class="cfg-lbl">FT min hours</span><input class="cfg-inp" id="cfgFTMin" type="number" min="1" oninput="syncConfig()"></div>
+    </div>
+    <div class="sb-sec" style="flex:1;overflow-y:auto">
+      <div class="sb-title">
+        <span>Employees</span>
+        <span class="chip blue" id="empCnt">0</span>
+      </div>
+      <div class="emp-list" id="empList"></div>
+    </div>
+    <div class="sb-sec">
+      <div class="sb-title">Store Hours (open / close)</div>
+      <div id="shGrid"></div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="cov-bar" id="covBar"></div>
+    <div class="tbl-wrap">
+      <div class="tbl-scroll">
+        <table>
+          <thead id="thead"></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ══ EMPLOYEE MODAL ════════════════════════════════════ -->
+<div class="ov" id="empOv">
+  <div class="modal">
+    <div class="mhdr">
+      <span class="mtitle" id="empModalTitle">Add Employee</span>
+      <button class="mclose" onclick="closeEmpModal()">&#10005;</button>
+    </div>
+    <div class="mbody">
+      <div class="fg">
+        <label class="fl">Full Name</label>
+        <input class="fi" id="eName" placeholder="e.g. Jennifer R.">
+      </div>
+      <div class="fg">
+        <label class="fl">Employee Type</label>
+        <div class="radio-g">
+          <div class="ropt sel ft" id="tFT" onclick="selectType('FT')">Full-Time</div>
+          <div class="ropt" id="tPT" onclick="selectType('PT')">Part-Time</div>
+        </div>
+      </div>
+      <div class="frow">
+        <div class="fg">
+          <label class="fl">Target Hrs / Week</label>
+          <input class="fi" id="eTgt" type="number" min="1" max="60">
+        </div>
+        <div class="fg">
+          <label class="fl">Min Hrs / Week</label>
+          <input class="fi" id="eMin" type="number" min="0" max="60">
+        </div>
+      </div>
+      <div class="fg">
+        <label class="fl">Role / Notes (optional)</label>
+        <input class="fi" id="eRole" placeholder="e.g. Pharm Tech, Rx Tech Cert">
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-ghost" onclick="closeEmpModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEmp()">Save Employee</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SHIFT PICKER MODAL ════════════════════════════════ -->
+<div class="ov" id="shiftOv">
+  <div class="modal wide">
+    <div class="mhdr">
+      <span class="mtitle" id="shiftModalTitle">Assign Shift</span>
+      <button class="mclose" onclick="closePicker()">&#10005;</button>
+    </div>
+    <div class="mbody">
+      <div class="presets" id="presetGrid"></div>
+      <div class="divr"><span class="divr-lbl">or custom shift</span></div>
+      <div class="cust-row">
+        <div class="fg"><label class="fl">Start</label><input class="fi" id="cStart" type="time"></div>
+        <div class="fg"><label class="fl">End</label><input class="fi" id="cEnd" type="time"></div>
+        <button class="btn btn-primary" style="flex-shrink:0;margin-top:20px" onclick="applyCustom()">Set</button>
+      </div>
+      <button class="off-btn" onclick="setOff()">&#10005; Mark as Day Off</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ AUTO-BUILD WIZARD ═════════════════════════════════ -->
+<div class="ov" id="buildOv">
+  <div class="modal wiz">
+    <div class="mhdr">
+      <span class="mtitle" id="wizTitle">Auto-Build Schedule</span>
+      <button class="mclose" onclick="closeBuildWizard()">&#10005;</button>
+    </div>
+    <div class="wiz-dots" id="wizDots">
+      <div class="wiz-dot active"></div>
+      <div class="wiz-dot"></div>
+      <div class="wiz-dot"></div>
+      <div class="wiz-dot"></div>
+    </div>
+    <div class="mbody" id="wizBody"></div>
+    <div class="mfoot">
+      <button class="btn btn-ghost" id="wizBack" onclick="wizBack()" style="display:none">&#8592; Back</button>
+      <button class="btn btn-ghost" onclick="closeBuildWizard()">Cancel</button>
+      <button class="btn btn-primary" id="wizNext" onclick="wizNext()">Next &#8594;</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ CONFLICT RESOLUTION MODAL ══════════════════════════ -->
+<div class="ov" id="conflictOv">
+  <div class="modal wide">
+    <div class="mhdr">
+      <span class="mtitle">&#9888;&#65039; Schedule Conflicts — Your Decision</span>
+      <button class="mclose" onclick="closeConflictDialog()">&#10005;</button>
+    </div>
+    <div class="mbody" id="conflictBody"></div>
+  </div>
+</div>
+
+<div class="toast-ct" id="toastCt"></div>
+<script src="app.js"></script>
+</body>
+</html>
