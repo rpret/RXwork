@@ -18,8 +18,10 @@ const state = {
   nextId: 1,
 };
 
-let pickerCtx = null;
-let editingId  = null;
+let pickerCtx    = null;
+let editingId    = null;
+let stepperState = { startH: 8, startM: 30, endH: 19, endM: 0 };
+let mealOverride = null;
 
 const DAYS      = ['Sat','Sun','Mon','Tue','Wed','Thu','Fri'];
 const DAYS_FULL = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
@@ -75,6 +77,12 @@ function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); retu
 function fmtDate(d)    { return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); }
 function weekKey()     { return state.weekStart.toISOString().slice(0,10); }
 function weekDates()   { return DAYS.map((_,i) => addDays(state.weekStart, i)); }
+function getISOWeek(d) {
+  const t = new Date(d); t.setHours(0,0,0,0);
+  t.setDate(t.getDate() + 4 - (t.getDay() || 7));
+  const y = new Date(t.getFullYear(), 0, 1);
+  return Math.ceil(((t - y) / 86400000 + 1) / 7);
+}
 
 // ── SCHEDULE ACCESSORS ───────────────────────────────────────────────────
 function getWS() {
@@ -124,8 +132,7 @@ function buildAutoSchedule(params) {
     2. Weekend closers  → 1 required, 2 preferred (soft target)
     3. Days off         → unconstrained, just hit hour targets
   */
-  const { budget, ftHours, ptHours, morningStaff, afternoonStaff,
-          closersPerDayWkdy, closersPerDayWknd, shortWeekend } = params;
+  const { budget, ftHours, ptHours, coverage, shortWeekend } = params;
 
   const FTs = state.employees.filter(e => e.type === 'FT');
   const PTs = state.employees.filter(e => e.type === 'PT');
@@ -187,35 +194,33 @@ function buildAutoSchedule(params) {
 
   // ── PASS 2: Assign closers (required minimums first, then preferred) ──
   for (let di = 0; di < 7; di++) {
-    const tmpl = shiftsForDay(di);
-    const isWknd = IS_WEEKEND[di];
-    // Required = 1 for weekends, closersPerDayWkdy for weekdays
-    const required  = isWknd ? 1 : closersPerDayWkdy;
-    const preferred = isWknd ? closersPerDayWknd : closersPerDayWkdy;
+    const cov     = coverage[di];
+    const tmpl    = shiftsForDay(di);
+    const isWknd  = IS_WEEKEND[di];
+    const required  = isWknd ? 1 : cov.closers;
+    const preferred = cov.closers;
 
-    let assigned = 0;
     for (let pass = 0; pass < preferred; pass++) {
-      const isSoft = pass >= required; // 2nd closer on weekend is soft
+      const isSoft = pass >= required;
       const cands = sorted([...FTs, ...PTs]).filter(e =>
         !isAssigned(e, di) && hrsLeft(e) >= tmpl.closer.hrs - 0.5
       );
       if (!cands.length) {
         if (!isSoft) {
-          // Required closer not filled — flag for conflict resolution later
           params._conflicts = params._conflicts || [];
           params._conflicts.push({ type: 'closer', di, required: true });
         }
         break;
       }
       assign(cands[0], di, tmpl.closer);
-      assigned++;
     }
   }
 
   // ── PASS 3: Fill morning + afternoon coverage slots ───────────────────
   for (let di = 0; di < 7; di++) {
+    const cov  = coverage[di];
     const tmpl = shiftsForDay(di);
-    const slotsNeeded = morningStaff + afternoonStaff;
+    const slotsNeeded = cov.morning + cov.afternoon;
     const filled = all.filter(e => isAssigned(e, di)).length;
     const stillNeeded = Math.max(0, slotsNeeded - filled);
 
@@ -224,9 +229,8 @@ function buildAutoSchedule(params) {
         !isAssigned(e, di) && hrsLeft(e) >= 3
       );
       if (!cands.length) break;
-      const emp = cands[0];
-      // Morning slots get opener shift, afternoon slots get mid
-      const shift = s < morningStaff ? tmpl.opener : tmpl.mid;
+      const emp   = cands[0];
+      const shift = s < cov.morning ? tmpl.opener : tmpl.mid;
       assign(emp, di, shift);
     }
   }
@@ -433,36 +437,28 @@ function showWizardStep(step) {
     },
     {
       title: '👥 Step 2 of 4 — Daily Coverage',
-      html: `
-        <div class="wiz-info">How many techs do you need on the floor at once? Sets minimum coverage slots per day.</div>
-        <div class="frow">
-          <div class="fg">
-            <label class="fl">Morning staff per day</label>
-            <input class="fi" id="wMorn" type="number" min="1" max="8" value="2">
+      html: () => `
+        <div class="wiz-info">Set how many staff are needed per shift segment for each day.</div>
+        <div class="wiz-cov-grid">
+          <div class="wiz-cov-hdr">
+            <div></div><div>Morning</div><div>Afternoon</div><div>Closing</div>
           </div>
-          <div class="fg">
-            <label class="fl">Afternoon staff per day</label>
-            <input class="fi" id="wAfter" type="number" min="1" max="8" value="2">
-          </div>
+          ${DAYS.map((d, i) => `
+          <div class="wiz-cov-row${IS_WEEKEND[i] ? ' weekend' : ''}">
+            <div class="wiz-cov-day">${DAYS_FULL[i]}</div>
+            <div><input class="wiz-cov-inp" id="wcM${i}" type="number" min="0" max="8" value="${IS_WEEKEND[i] ? 1 : 2}"></div>
+            <div><input class="wiz-cov-inp" id="wcA${i}" type="number" min="0" max="8" value="${IS_WEEKEND[i] ? 1 : 2}"></div>
+            <div><input class="wiz-cov-inp" id="wcC${i}" type="number" min="1" max="4" value="2"></div>
+          </div>`).join('')}
         </div>
-        <div class="frow" style="margin-top:2px">
-          <div class="fg">
-            <label class="fl">Closers — weekdays</label>
-            <input class="fi" id="wCloseWkdy" type="number" min="1" max="4" value="2">
-          </div>
-          <div class="fg">
-            <label class="fl">Closers — weekends</label>
-            <input class="fi" id="wCloseWknd" type="number" min="1" max="4" value="2">
-            <div class="wiz-note" style="margin-top:4px">Min 1 required, 2 preferred</div>
-          </div>
-        </div>
-        <div class="wiz-note" style="margin-top:8px">💡 A short ★ shift till ~1:30pm will be auto-added on Sat &amp; Sun.</div>`,
+        <div class="wiz-note" style="margin-top:8px">&#128161; A short &#9733; shift will be auto-added on Sat &amp; Sun.</div>`,
       next: () => {
-        wizardParams.morningStaff      = parseInt(document.getElementById('wMorn').value)      || 2;
-        wizardParams.afternoonStaff    = parseInt(document.getElementById('wAfter').value)     || 2;
-        wizardParams.closersPerDayWkdy = parseInt(document.getElementById('wCloseWkdy').value) || 2;
-        wizardParams.closersPerDayWknd = parseInt(document.getElementById('wCloseWknd').value) || 2;
-        wizardParams.shortWeekend      = true;
+        wizardParams.coverage     = DAYS.map((_, i) => ({
+          morning:   parseInt(document.getElementById(`wcM${i}`).value) || 0,
+          afternoon: parseInt(document.getElementById(`wcA${i}`).value) || 0,
+          closers:   parseInt(document.getElementById(`wcC${i}`).value) || 1,
+        }));
+        wizardParams.shortWeekend = true;
         return true;
       }
     },
@@ -512,7 +508,7 @@ function showWizardStep(step) {
         <div class="wiz-confirm">
           <div class="wiz-conf-row"><span>📅 Week</span><strong>${document.getElementById('weekLbl').textContent}</strong></div>
           <div class="wiz-conf-row"><span>💰 Budget</span><strong>${wizardParams.budget}h</strong></div>
-          <div class="wiz-conf-row"><span>👥 Coverage / day</span><strong>${wizardParams.morningStaff} morning + ${wizardParams.afternoonStaff} afternoon, ${wizardParams.closersPerDay} closers</strong></div>
+          <div class="wiz-conf-row wiz-conf-cov"><span>👥 Coverage</span><div class="wiz-cov-summary">${DAYS.map((d,i)=>{const c=wizardParams.coverage[i];return `<span><strong>${d}</strong>&nbsp;${c.morning}M&nbsp;${c.afternoon}A&nbsp;${c.closers}C</span>`;}).join('')}</div></div>
           <div class="wiz-conf-row"><span>🔵 FT hours (${FTs.length} employees)</span><strong>${wizardParams.ftHours}h each = ${ftTotal}h</strong></div>
           <div class="wiz-conf-row"><span>🟢 PT hours (${PTs.length} employees)</span><strong>~${wizardParams.ptHours}h each</strong></div>
           <div class="wiz-conf-sep"></div>
@@ -595,8 +591,12 @@ function shiftBlockHTML(emp, di, shift) {
 }
 
 function renderWeekLabel() {
-  const dd = weekDates();
-  document.getElementById('weekLbl').textContent = `${fmtDate(dd[0])} – ${fmtDate(dd[6])}`;
+  const dd  = weekDates();
+  const wk  = getISOWeek(dd[2]);
+  const rng = `${fmtDate(dd[0])} – ${fmtDate(dd[6])}`;
+  document.getElementById('weekLbl').innerHTML = `<span class="wk-num">W${wk}</span> ${rng}`;
+  const pt = document.getElementById('printTitle');
+  if (pt) pt.textContent = `Rx Scheduler — W${wk} · ${rng}`;
 }
 
 function renderStoreHours() {
@@ -787,42 +787,165 @@ function delEmp(id) {
 
 // ── SHIFT PICKER ──────────────────────────────────────────────────────────
 function openPicker(eid, di) {
-  pickerCtx = { eid, di };
-  const e = state.employees.find(x=>x.id===eid);
-  document.getElementById('shiftModalTitle').textContent = `${e.name} — ${DAYS_FULL[di]}`;
-  const open  = state.storeHours[di].open;
-  const close = state.storeHours[di].close;
-  document.getElementById('cStart').value = open;
-  document.getElementById('cEnd').value   = close;
+  if (di < 0) { toast('Click a specific day cell to edit.', 'info'); return; }
+  pickerCtx    = { eid, di };
+  mealOverride = null;
+  const emp = state.employees.find(x => x.id === eid);
+
+  document.getElementById('shiftModalTitle').textContent = `${emp.name} — ${DAYS_FULL[di]}`;
+  document.getElementById('pkStats').innerHTML = buildStatsCard(emp, di);
+
   document.getElementById('presetGrid').innerHTML = PRESETS.map(p => {
     const h = calcHrs(p.start, p.end);
-    return `<button class="prs ${p.cls}" onclick="applyPreset('${p.start}','${p.end}')">
+    return `<button class="prs ${p.cls}" onclick="applyPreset('${p.start}','${p.end}',this)">
       <div class="prs-lbl">${p.lbl}</div>
       <div class="prs-time">${fmt12(p.start)} – ${fmt12(p.end)}</div>
       <div class="prs-hrs">${h.toFixed(1)}h${h>=6?' (w/meal)':''}</div>
     </button>`;
   }).join('');
+
+  const cur = getShift(eid, di);
+  setStepperFromTime(
+    cur ? cur.start : state.storeHours[di].open,
+    cur ? cur.end   : state.storeHours[di].close
+  );
+
+  document.getElementById('pkCov').innerHTML = buildCoverageStrip(di, eid);
+
+  const prevKey   = addDays(state.weekStart, -7).toISOString().slice(0, 10);
+  const lastShift = state.schedules[prevKey]?.[eid]?.[di];
+  const copyBtn   = document.getElementById('pkCopyBtn');
+  if (lastShift) {
+    copyBtn.style.display = '';
+    copyBtn.title = `Last week: ${fmt12(lastShift.start)}–${fmt12(lastShift.end)}`;
+  } else {
+    copyBtn.style.display = 'none';
+  }
+
   document.getElementById('shiftOv').classList.add('open');
 }
-function closePicker() { document.getElementById('shiftOv').classList.remove('open'); pickerCtx=null; }
+function closePicker() { document.getElementById('shiftOv').classList.remove('open'); pickerCtx = null; }
 
-function applyPreset(s, e) {
+function applyPreset(s, e, btn) {
   if (!pickerCtx) return;
-  setShift(pickerCtx.eid, pickerCtx.di, {start:s, end:e, hrs:calcHrs(s,e)});
-  closePicker(); renderAll();
+  document.querySelectorAll('#presetGrid .prs').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  mealOverride = null;
+  setStepperFromTime(s, e);
 }
 function applyCustom() {
   if (!pickerCtx) return;
-  const s=document.getElementById('cStart').value, e=document.getElementById('cEnd').value;
-  if (!s||!e) { toast('Enter both times.','error'); return; }
-  if (t2m(e)<=t2m(s)) { toast('End must be after start.','error'); return; }
-  setShift(pickerCtx.eid, pickerCtx.di, {start:s, end:e, hrs:calcHrs(s,e)});
+  const s = stepperTime('start'), e = stepperTime('end');
+  if (t2m(e) <= t2m(s)) { toast('End must be after start.', 'error'); return; }
+  const raw  = (t2m(e) - t2m(s)) / 60;
+  const meal = document.getElementById('pkMeal');
+  const hrs  = meal?.checked ? Math.max(0, raw - 0.5) : raw;
+  setShift(pickerCtx.eid, pickerCtx.di, { start: s, end: e, hrs });
   closePicker(); renderAll();
 }
 function setOff() {
   if (!pickerCtx) return;
   setShift(pickerCtx.eid, pickerCtx.di, null);
   closePicker(); renderAll();
+}
+
+// ── STEPPER ───────────────────────────────────────────────────────────────
+function stepperTime(which) {
+  const h = stepperState[which + 'H'], m = stepperState[which + 'M'];
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+function setStepperFromTime(start, end) {
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  stepperState = { startH: sh, startM: sm, endH: eh, endM: em };
+  renderStepper();
+}
+function renderStepper() {
+  document.getElementById('pkStartH').textContent = String(stepperState.startH).padStart(2,'0');
+  document.getElementById('pkStartM').textContent = String(stepperState.startM).padStart(2,'0');
+  document.getElementById('pkEndH').textContent   = String(stepperState.endH).padStart(2,'0');
+  document.getElementById('pkEndM').textContent   = String(stepperState.endM).padStart(2,'0');
+  updateDurDisplay();
+}
+function stepTime(which, unit, dir) {
+  if (unit === 'h') {
+    stepperState[which + 'H'] = (stepperState[which + 'H'] + dir + 24) % 24;
+  } else {
+    let m = stepperState[which + 'M'] + dir * 15;
+    if (m < 0) m += 60;
+    if (m >= 60) m -= 60;
+    stepperState[which + 'M'] = m;
+  }
+  renderStepper();
+}
+function updateDurDisplay() {
+  const s = stepperTime('start'), e = stepperTime('end');
+  const raw  = (t2m(e) - t2m(s)) / 60;
+  const meal = document.getElementById('pkMeal');
+  if (!meal) return;
+  if (mealOverride === null) meal.checked = raw >= 6;
+  const hrs   = meal.checked ? Math.max(0, raw - 0.5) : raw;
+  const durEl = document.getElementById('pkDur');
+  if (!durEl) return;
+  if (raw <= 0) {
+    durEl.textContent = 'invalid';
+    durEl.className   = 'pk-dur err';
+  } else {
+    durEl.textContent = `${hrs.toFixed(1)}h`;
+    durEl.className   = 'pk-dur';
+  }
+}
+function copyLastWeek() {
+  if (!pickerCtx) return;
+  const prevKey = addDays(state.weekStart, -7).toISOString().slice(0, 10);
+  const last    = state.schedules[prevKey]?.[pickerCtx.eid]?.[pickerCtx.di];
+  if (!last) return;
+  mealOverride = null;
+  setStepperFromTime(last.start, last.end);
+  toast(`Loaded: ${fmt12(last.start)}–${fmt12(last.end)}`, 'info');
+}
+
+// ── PICKER HELPERS ────────────────────────────────────────────────────────
+function buildStatsCard(emp, di) {
+  const weekHrs    = empHrs(emp.id);
+  const target     = emp.targetHrs;
+  const diff       = target - weekHrs;
+  const daysWkd    = DAYS.reduce((s,_,i) => s + (getShift(emp.id,i)?.hrs > 0 ? 1 : 0), 0);
+  const wkndShifts = [0,1].filter(i => getShift(emp.id,i)?.hrs > 0).length;
+  const wkndHrs    = [0,1].reduce((s,i) => s + (getShift(emp.id,i)?.hrs ?? 0), 0);
+  const cur        = getShift(emp.id, di);
+  const diffCls    = diff > 2 ? 'yellow' : diff < -0.5 ? 'red' : 'green';
+  const diffTxt    = diff > 0.05 ? `${diff.toFixed(1)}h under` : diff < -0.05 ? `${(-diff).toFixed(1)}h over` : 'on target';
+  const wkndCell   = wkndShifts
+    ? `${wkndShifts}&thinsp;<span style="font-size:10px;font-weight:400;color:var(--text3)">(${wkndHrs.toFixed(1)}h)</span>`
+    : '&mdash;';
+  const curLine    = cur
+    ? `Replacing: <strong>${fmt12(cur.start)} &ndash; ${fmt12(cur.end)}</strong> &middot; ${cur.hrs.toFixed(1)}h`
+    : 'No shift assigned yet';
+  return `<div class="pk-stat-card">
+    <div class="pk-stat-row">
+      <span class="pk-stat-name">${esc(emp.name)}</span>
+      <span class="et ${emp.type.toLowerCase()}">${emp.type}</span>
+    </div>
+    <div class="pk-stat-grid">
+      <div class="pk-stat-item"><div class="pk-stat-val">${weekHrs.toFixed(1)}h</div><div class="pk-stat-lbl">of ${target}h target</div></div>
+      <div class="pk-stat-item"><div class="pk-stat-val ${diffCls}">${diffTxt}</div><div class="pk-stat-lbl">balance</div></div>
+      <div class="pk-stat-item"><div class="pk-stat-val">${daysWkd}</div><div class="pk-stat-lbl">days scheduled</div></div>
+      <div class="pk-stat-item"><div class="pk-stat-val">${wkndCell}</div><div class="pk-stat-lbl">weekend shifts</div></div>
+    </div>
+    <div class="pk-cur-shift${cur ? '' : ' empty'}">${curLine}</div>
+  </div>`;
+}
+function buildCoverageStrip(di, excludeEid) {
+  const others = state.employees.filter(e => e.id !== excludeEid && getShift(e.id, di)?.hrs > 0);
+  if (!others.length)
+    return `<div class="pk-cov-inner"><span class="pk-cov-empty">No one else scheduled on ${DAYS_FULL[di]}</span></div>`;
+  const items = others.map(e => {
+    const s   = getShift(e.id, di);
+    const tag = isCloser(s, di) ? '&#128274; ' : isShort(s) ? '&#9733; ' : '';
+    return `<span class="pk-cov-item">${tag}${esc(e.name.split(' ')[0])} <span class="pk-cov-time">${fmt12(s.start)}&ndash;${fmt12(s.end)}</span></span>`;
+  }).join('');
+  return `<div class="pk-cov-inner"><span class="pk-cov-lbl">${DAYS_FULL[di]}:</span>${items}</div>`;
 }
 
 // ── CONFIG ────────────────────────────────────────────────────────────────
@@ -845,7 +968,11 @@ function toast(msg, type='info') {
 
 // ── KEYBOARD ──────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
-  if (e.key==='Escape') { closePicker(); closeEmpModal(); closeBuildWizard(); }
+  if (e.key === 'Escape') { closePicker(); closeEmpModal(); closeBuildWizard(); }
+  if (document.getElementById('shiftOv').classList.contains('open') && !e.target.matches('input,textarea')) {
+    if (e.key === 'Enter') { e.preventDefault(); applyCustom(); }
+    if (e.key === 'd' || e.key === 'D') setOff();
+  }
 });
 ['empOv','shiftOv','buildOv'].forEach(id => {
   document.getElementById(id)?.addEventListener('click', function(e) {

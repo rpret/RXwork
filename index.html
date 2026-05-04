@@ -68,6 +68,7 @@
 
   <!-- MAIN -->
   <main class="main">
+    <div class="print-title" id="printTitle"></div>
     <div class="cov-bar" id="covBar"></div>
     <div class="tbl-wrap">
       <div class="tbl-scroll">
@@ -129,14 +130,51 @@
       <button class="mclose" onclick="closePicker()">&#10005;</button>
     </div>
     <div class="mbody">
+      <div id="pkStats"></div>
       <div class="presets" id="presetGrid"></div>
-      <div class="divr"><span class="divr-lbl">or custom shift</span></div>
-      <div class="cust-row">
-        <div class="fg"><label class="fl">Start</label><input class="fi" id="cStart" type="time"></div>
-        <div class="fg"><label class="fl">End</label><input class="fi" id="cEnd" type="time"></div>
-        <button class="btn btn-primary" style="flex-shrink:0;margin-top:20px" onclick="applyCustom()">Set</button>
+      <div class="divr"><span class="divr-lbl">fine-tune or custom</span></div>
+      <div class="pk-time-row">
+        <div class="pk-time-grp">
+          <div class="fl">Start</div>
+          <div class="pk-stepper">
+            <button class="pk-step" onclick="stepTime('start','h',-1)">&#8722;</button>
+            <span class="pk-val" id="pkStartH">08</span>
+            <button class="pk-step" onclick="stepTime('start','h',1)">+</button>
+            <span class="pk-sep">:</span>
+            <button class="pk-step" onclick="stepTime('start','m',-1)">&#8722;</button>
+            <span class="pk-val" id="pkStartM">30</span>
+            <button class="pk-step" onclick="stepTime('start','m',1)">+</button>
+          </div>
+        </div>
+        <div class="pk-time-grp">
+          <div class="fl">End</div>
+          <div class="pk-stepper">
+            <button class="pk-step" onclick="stepTime('end','h',-1)">&#8722;</button>
+            <span class="pk-val" id="pkEndH">19</span>
+            <button class="pk-step" onclick="stepTime('end','h',1)">+</button>
+            <span class="pk-sep">:</span>
+            <button class="pk-step" onclick="stepTime('end','m',-1)">&#8722;</button>
+            <span class="pk-val" id="pkEndM">00</span>
+            <button class="pk-step" onclick="stepTime('end','m',1)">+</button>
+          </div>
+        </div>
+        <div class="pk-dur-wrap">
+          <div class="fl">Duration</div>
+          <div class="pk-dur" id="pkDur">&#8212;</div>
+          <label class="pk-meal-lbl">
+            <input type="checkbox" id="pkMeal" onchange="mealOverride=this.checked;updateDurDisplay()">
+            meal &#8722;&#189;h
+          </label>
+        </div>
       </div>
-      <button class="off-btn" onclick="setOff()">&#10005; Mark as Day Off</button>
+      <div class="pk-cov" id="pkCov"></div>
+      <div class="pk-actions">
+        <button class="off-btn" onclick="setOff()">&#10005; Day Off</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost btn-sm" id="pkCopyBtn" onclick="copyLastWeek()" style="display:none">&#8629; Last week</button>
+        <button class="btn btn-primary" onclick="applyCustom()">Set Shift &#8594;</button>
+      </div>
+      <div class="pk-kbd-hints">Enter &mdash; set shift &nbsp;&middot;&nbsp; D &mdash; day off &nbsp;&middot;&nbsp; Esc &mdash; cancel</div>
     </div>
   </div>
 </div>
